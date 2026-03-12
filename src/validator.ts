@@ -21,7 +21,12 @@ export async function validateRepo(repoUrl: string, config: ValidatorConfig): Pr
   const result: ValidationResult = {
     isValid: true,
     humanContributors: [],
-    validationErrors: []
+    validationErrors: [],
+    cloneDetection: {
+      isClone: false,
+      suspicionScore: 0,
+      reasons: []
+    }
   };
 
   const parsed = parseGithubUrl(repoUrl);
@@ -39,7 +44,15 @@ export async function validateRepo(repoUrl: string, config: ValidatorConfig): Pr
 
   try {
     // 1. Verify repo exists and is accessible
-    await octokit.rest.repos.get({ owner, repo });
+    const repoResponse = await octokit.rest.repos.get({ owner, repo });
+
+    // 1b. Fast native Fork check
+    if (repoResponse.data.fork) {
+      result.cloneDetection.suspicionScore += 100;
+      result.cloneDetection.reasons.push(
+        `Repository is a fork of ${repoResponse.data.parent?.html_url || 'another project'}.`
+      );
+    }
 
     // 2. Fetch commits within the time window
     const since = new Date(config.timeWindow.start).toISOString();
@@ -73,6 +86,11 @@ export async function validateRepo(repoUrl: string, config: ValidatorConfig): Pr
     if (result.humanContributors.length > config.maxTeamSize) {
       result.isValid = false;
       result.validationErrors.push(`Team size exceeded. Expected max ${config.maxTeamSize}, but found ${result.humanContributors.length} human contributors.`);
+    }
+
+    // Final clone evaluation
+    if (result.cloneDetection.suspicionScore >= 100) {
+      result.cloneDetection.isClone = true;
     }
 
   } catch (error: any) {

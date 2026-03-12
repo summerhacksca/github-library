@@ -36,6 +36,25 @@ describe('validator', () => {
     expect(result.validationErrors).toContain('Invalid GitHub URL provided.');
   });
 
+  it('should flag a repository if it is a direct fork', async () => {
+    mockGetRepo.mockResolvedValueOnce({
+      data: {
+        fork: true,
+        parent: { html_url: 'https://github.com/original/repo' }
+      }
+    });
+
+    // Mock commits resolving empty
+    mockListCommits.mockResolvedValueOnce({ data: [] });
+
+    const config: ValidatorConfig = { timeWindow: { start: new Date(), end: new Date() }, maxTeamSize: 4 };
+    const result = await validateRepo('https://github.com/owner/forked-repo', config);
+    
+    expect(result.cloneDetection.isClone).toBe(true);
+    expect(result.cloneDetection.suspicionScore).toBeGreaterThanOrEqual(100);
+    expect(result.cloneDetection.reasons[0]).toContain('https://github.com/original/repo');
+  });
+
   it('should correctly identify human contributors and respect team size', async () => {
     mockGetRepo.mockResolvedValueOnce({ data: {} });
     mockListCommits.mockResolvedValueOnce({
