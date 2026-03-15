@@ -2,7 +2,6 @@ import { validateRepo } from '../validator';
 import { ValidatorConfig } from '../types';
 import { Octokit } from '@octokit/rest';
 
-// We mock octokit so we don't hit the real API in tests
 jest.mock('@octokit/rest');
 
 describe('validator', () => {
@@ -29,79 +28,88 @@ describe('validator', () => {
     jest.clearAllMocks();
   });
 
-  it('should invalidate incorrect github urls', async () => {
+  it('should return violation for invalid GitHub URL', async () => {
     const config: ValidatorConfig = { timeWindow: { start: new Date(), end: new Date() }, maxTeamSize: 4 };
-    const result = await validateRepo('https://example.com', config);
+    const result = await validateRepo('not-a-valid-url', config);
     expect(result.isValid).toBe(false);
-    expect(result.validationErrors).toContain('Invalid GitHub URL provided.');
+    expect(result.violations.some(v => v.includes('Invalid GitHub URL'))).toBe(true);
   });
 
-  it('should flag a repository if it is a direct fork', async () => {
-    mockGetRepo.mockResolvedValueOnce({
-      data: {
-        fork: true,
-        parent: { html_url: 'https://github.com/original/repo' }
-      }
-    });
+  it('should return violation when repo is a fork', async () => {
+    mockGetRepo.mockResolvedValueOnce({ data: { fork: true } });
+    mockListCommits.mockResolvedValueOnce({ data: [] }); // all commits
+    mockListCommits.mockResolvedValueOnce({ data: [] }); // windowed commits
 
-    // Mock commits resolving empty
-    mockListCommits.mockResolvedValueOnce({ data: [] });
-
-    const config: ValidatorConfig = { timeWindow: { start: new Date(), end: new Date() }, maxTeamSize: 4 };
+    const config: ValidatorConfig = { timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' }, maxTeamSize: 4 };
     const result = await validateRepo('https://github.com/owner/forked-repo', config);
-    
-    expect(result.cloneDetection.isClone).toBe(true);
-    expect(result.cloneDetection.suspicionScore).toBeGreaterThanOrEqual(100);
-    expect(result.cloneDetection.reasons[0]).toContain('https://github.com/original/repo');
-  });
-
-  it('should correctly identify human contributors and respect team size', async () => {
-    mockGetRepo.mockResolvedValueOnce({ data: {} });
-    mockListCommits.mockResolvedValueOnce({
-      data: [
-        { author: { login: 'human-coder', type: 'User' } },
-        { author: { login: 'dependabot[bot]', type: 'Bot' } },
-        { author: { login: 'another-human', type: 'User' } },
-        { author: { login: 'human-coder', type: 'User' } }, // Duplicate commit
-      ]
-    });
-
-    const config: ValidatorConfig = {
-      timeWindow: {
-        start: '2026-03-01T00:00:00Z',
-        end: '2026-03-15T00:00:00Z'
-      },
-      maxTeamSize: 4
-    };
-
-    const result = await validateRepo('https://github.com/my-org/hackathon-repo', config);
-
-    expect(result.humanContributors).toEqual(['human-coder', 'another-human']);
-    expect(result.isValid).toBe(true);
-    expect(result.validationErrors).toHaveLength(0);
-  });
-
-  it('should invalidate if team size exceeds maxTeamSize', async () => {
-    mockGetRepo.mockResolvedValueOnce({ data: {} });
-    mockListCommits.mockResolvedValueOnce({
-      data: [
-        { author: { login: 'human1', type: 'User' } },
-        { author: { login: 'human2', type: 'User' } },
-        { author: { login: 'human3', type: 'User' } },
-        { author: { login: 'human4', type: 'User' } },
-        { author: { login: 'human5', type: 'User' } },
-      ]
-    });
-
-    const config: ValidatorConfig = {
-      timeWindow: { start: '2026-03-01T00:00:00Z', end: '2026-03-15T00:00:00Z' },
-      maxTeamSize: 4
-    };
-
-    const result = await validateRepo('https://github.com/my-org/hackathon-repo', config);
-
-    expect(result.humanContributors).toHaveLength(5);
     expect(result.isValid).toBe(false);
-    expect(result.validationErrors[0]).toMatch(/Team size exceeded/);
+    expect(result.violations).toContain('Repository is a fork');
+  });
+
+  it('should return violation when commits exist before hackathon start', async () => {
+    mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
+    mockListCommits.mockResolvedValueOnce({
+      data: [
+        {
+          commit: { author: { date: '2025-01-01T00:00:00Z' } },
+          author: { login: 'early-dev', type: 'User' }
+        }
+      ]
+    }); // all commits
+    mockListCommits.mockResolvedValueOnce({ data: [] }); // windowed commits
+
+    const config: ValidatorConfig = { timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' }, maxTeamSize: 4 };
+    const result = await validateRepo('https://github.com/owner/repo', config);
+    expect(result.violations).toContain('Commits exist before hackathon start');
+  });
+
+  it('should return violation when commits exist after hackathon deadline', async () => {
+    mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
+    mockListCommits.mockResolvedValueOnce({
+      data: [
+        {
+          commit: { author: { date: '2027-01-01T00:00:00Z' } },
+          author: { login: 'late-dev', type: 'User' }
+        }
+      ]
+    }); // all commits
+    mockListCommits.mockResolvedValueOnce({ data: [] }); // windowed commits
+
+    const config: ValidatorConfig = { timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' }, maxTeamSize: 4 };
+    const result = await validateRepo('https://github.com/owner/repo', config);
+    expect(result.violations).toContain('Commits exist after hackathon deadline');
+  });
+
+  it('should return only human contributors and pass when within team size', async () => {
+    mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
+
+    const commits = [
+      { commit: { author: { date: '2026-03-13T10:00:00Z' } }, author: { login: 'human-dev', type: 'User' } },
+      { commit: { author: { date: '2026-03-13T11:00:00Z' } }, author: { login: 'dependabot[bot]', type: 'Bot' } }
+    ];
+    mockListCommits.mockResolvedValueOnce({ data: commits }); // all commits
+    mockListCommits.mockResolvedValueOnce({ data: commits }); // windowed commits
+
+    const config: ValidatorConfig = { timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' }, maxTeamSize: 4 };
+    const result = await validateRepo('https://github.com/owner/repo', config);
+    expect(result.isValid).toBe(true);
+    expect(result.humanContributors).toEqual(['human-dev']);
+    expect(result.violations).toHaveLength(0);
+  });
+
+  it('should return violation when team size is exceeded', async () => {
+    mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
+
+    const commits = [
+      { commit: { author: { date: '2026-03-13T10:00:00Z' } }, author: { login: 'dev-one', type: 'User' } },
+      { commit: { author: { date: '2026-03-13T11:00:00Z' } }, author: { login: 'dev-two', type: 'User' } }
+    ];
+    mockListCommits.mockResolvedValueOnce({ data: commits }); // all commits
+    mockListCommits.mockResolvedValueOnce({ data: commits }); // windowed commits
+
+    const config: ValidatorConfig = { timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' }, maxTeamSize: 1 };
+    const result = await validateRepo('https://github.com/owner/repo', config);
+    expect(result.isValid).toBe(false);
+    expect(result.violations.some(v => v.includes('Team size exceeded'))).toBe(true);
   });
 });

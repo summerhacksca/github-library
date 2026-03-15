@@ -18,22 +18,13 @@ function parseGithubUrl(url: string): { owner: string; repo: string } | null {
 }
 
 export async function validateRepo(repoUrl: string, config: ValidatorConfig): Promise<ValidationResult> {
-  const result: ValidationResult = {
-    isValid: true,
-    humanContributors: [],
-    validationErrors: [],
-    cloneDetection: {
-      isClone: false,
-      suspicionScore: 0,
-      reasons: []
-    }
-  };
+  const violations: string[] = [];
+  const humanContributors: string[] = [];
 
   const parsed = parseGithubUrl(repoUrl);
   if (!parsed) {
-    result.isValid = false;
-    result.validationErrors.push('Invalid GitHub URL provided.');
-    return result;
+    violations.push('Invalid GitHub URL provided.');
+    return { isValid: false, humanContributors, violations };
   }
 
   const { owner, repo } = parsed;
@@ -46,30 +37,51 @@ export async function validateRepo(repoUrl: string, config: ValidatorConfig): Pr
     // 1. Verify repo exists and is accessible
     const repoResponse = await octokit.rest.repos.get({ owner, repo });
 
-    // 1b. Fast native Fork check
+    // 2. Fork check
     if (repoResponse.data.fork) {
-      result.cloneDetection.suspicionScore += 100;
-      result.cloneDetection.reasons.push(
-        `Repository is a fork of ${repoResponse.data.parent?.html_url || 'another project'}.`
-      );
+      violations.push('Repository is a fork');
     }
 
-    // 2. Fetch commits within the time window
-    const since = new Date(config.timeWindow.start).toISOString();
-    const until = new Date(config.timeWindow.end).toISOString();
+    const hackathonStart = new Date(config.timeWindow.start);
+    const hackathonEnd = new Date(config.timeWindow.end);
 
+    // 3. Fetch all commits to check for out-of-window commits
+    const allCommitsResponse = await octokit.rest.repos.listCommits({
+      owner,
+      repo,
+      per_page: 100
+    });
+
+    const hasEarlyCommit = allCommitsResponse.data.some((commitItem) => {
+      if (!commitItem.commit.author?.date) return false;
+      return new Date(commitItem.commit.author.date) < hackathonStart;
+    });
+
+    if (hasEarlyCommit) {
+      violations.push('Commits exist before hackathon start');
+    }
+
+    const hasLateCommit = allCommitsResponse.data.some((commitItem) => {
+      if (!commitItem.commit.author?.date) return false;
+      return new Date(commitItem.commit.author.date) > hackathonEnd;
+    });
+
+    if (hasLateCommit) {
+      violations.push('Commits exist after hackathon deadline');
+    }
+
+    // 4. Fetch windowed commits to determine human contributors
     const commitsResponse = await octokit.rest.repos.listCommits({
       owner,
       repo,
-      since,
-      until,
-      per_page: 100 // Depending on hackathon size, we might need pagination, but 100 defaults is ok for now without auto-pagination plugin
+      since: hackathonStart.toISOString(),
+      until: hackathonEnd.toISOString(),
+      per_page: 100
     });
 
     const committersMap = new Map<string, Contributor>();
 
     for (const commitItem of commitsResponse.data) {
-      // Author could be null if it's not linked to a GitHub account
       if (commitItem.author && commitItem.author.login) {
         committersMap.set(commitItem.author.login, {
           login: commitItem.author.login,
@@ -79,30 +91,23 @@ export async function validateRepo(repoUrl: string, config: ValidatorConfig): Pr
     }
 
     const uniqueContributors = Array.from(committersMap.values());
-    const humanContributors = filterBots(uniqueContributors);
+    const humans = filterBots(uniqueContributors);
+    humanContributors.push(...humans.map(c => c.login));
 
-    result.humanContributors = humanContributors.map(c => c.login);
-
-    if (result.humanContributors.length > config.maxTeamSize) {
-      result.isValid = false;
-      result.validationErrors.push(`Team size exceeded. Expected max ${config.maxTeamSize}, but found ${result.humanContributors.length} human contributors.`);
-    }
-
-    // Final clone evaluation
-    if (result.cloneDetection.suspicionScore >= 100) {
-      result.cloneDetection.isClone = true;
+    // 5. Team size check
+    if (humanContributors.length > config.maxTeamSize) {
+      violations.push(`Team size exceeded: found ${humanContributors.length}, max is ${config.maxTeamSize}`);
     }
 
   } catch (error: any) {
-    result.isValid = false;
     if (error.status === 404) {
-      result.validationErrors.push('Repository not found or is private.');
+      violations.push('Repository not found or is private.');
     } else if (error.status === 403) {
-      result.validationErrors.push('GitHub API rate limit exceeded. Please provide a githubToken.');
+      violations.push('GitHub API rate limit exceeded. Please provide a githubToken.');
     } else {
-      result.validationErrors.push(`Failed to fetch repository data: ${error.message}`);
+      violations.push(`Failed to fetch repository data: ${error.message}`);
     }
   }
 
-  return result;
+  return { isValid: violations.length === 0, humanContributors, violations };
 }
