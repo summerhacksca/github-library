@@ -151,3 +151,14 @@ export async function validateRepo(repoUrl: string, config: ValidatorConfig): Pr
 
   return { isValid: violations.length === 0, humanContributors, violations };
 }
+
+export async function validateRepos(
+  repoUrls: string[],
+  config: ValidatorConfig
+): Promise<Map<string, ValidationResult>> {
+  const results = new Map<string, ValidationResult>();
+  for (const url of repoUrls) {
+    results.set(url, await validateRepo(url, config));
+  }
+  return results;
+}

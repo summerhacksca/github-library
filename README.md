@@ -31,6 +31,43 @@ if (result.isValid) {
 }
 ```
 
+## Batch Validation
+
+To validate multiple submissions at once, use `validateRepos()`. It runs sequentially to respect GitHub API rate limits.
+
+```typescript
+import { validateRepos, ValidatorConfig } from '@summerhacksca/github-library';
+
+const config: ValidatorConfig = {
+  githubToken: process.env.GITHUB_TOKEN,
+  timeWindow: {
+    start: '2026-03-12T08:00:00Z',
+    end: '2026-03-15T18:00:00Z',
+  },
+  maxTeamSize: 4,
+  readmePlagiarism: {
+    enabled: true,
+    matchThreshold: 3,
+  },
+};
+
+const repos = [
+  'https://github.com/team1/project',
+  'https://github.com/team2/project',
+  'https://github.com/team3/project',
+];
+
+const results = await validateRepos(repos, config);
+
+for (const [url, result] of results) {
+  if (result.isValid) {
+    console.log(`${url}: PASSED (${result.humanContributors.join(', ')})`);
+  } else {
+    console.log(`${url}: FAILED`, result.violations);
+  }
+}
+```
+
 ## Configuration Reference
 
 `ValidatorConfig`

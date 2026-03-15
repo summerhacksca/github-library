@@ -1,4 +1,4 @@
-import { validateRepo } from '../validator';
+import { validateRepo, validateRepos } from '../validator';
 import { ValidatorConfig } from '../types';
 import { Octokit } from '@octokit/rest';
 import { fetchReadme, extractSignificantLines, checkReadmePlagiarism } from '../readme-checker';
@@ -253,5 +253,37 @@ describe('validator', () => {
 
     expect(result.isValid).toBe(true);
     expect(result.humanContributors).toEqual(['dev-one']);
+  });
+
+  it('should validate multiple repos and return results for each', async () => {
+    const validUrl = 'https://github.com/owner/valid-repo';
+    const invalidUrl = 'not-a-url';
+
+    const commits = [
+      { commit: { author: { date: '2026-03-13T10:00:00Z' }, message: '' }, author: { login: 'human-dev', type: 'User' } }
+    ];
+    mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
+    mockPaginate.mockResolvedValueOnce(commits); // all commits for valid repo
+    mockPaginate.mockResolvedValueOnce(commits); // windowed commits for valid repo
+
+    const config: ValidatorConfig = {
+      timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' },
+      maxTeamSize: 4
+    };
+    const results = await validateRepos([validUrl, invalidUrl], config);
+
+    expect(results.size).toBe(2);
+    expect(results.get(validUrl)!.isValid).toBe(true);
+    expect(results.get(invalidUrl)!.isValid).toBe(false);
+    expect(results.get(invalidUrl)!.violations.some(v => v.includes('Invalid GitHub URL'))).toBe(true);
+  });
+
+  it('should return empty map for empty input', async () => {
+    const config: ValidatorConfig = {
+      timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' },
+      maxTeamSize: 4
+    };
+    const results = await validateRepos([], config);
+    expect(results.size).toBe(0);
   });
 });
