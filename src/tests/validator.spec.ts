@@ -15,19 +15,20 @@ const mockExtractSignificantLines = extractSignificantLines as jest.Mock;
 const mockCheckReadmePlagiarism = checkReadmePlagiarism as jest.Mock;
 
 describe('validator', () => {
-  let mockListCommits: jest.Mock;
+  let mockPaginate: jest.Mock;
   let mockGetRepo: jest.Mock;
 
   beforeEach(() => {
-    mockListCommits = jest.fn();
+    mockPaginate = jest.fn();
     mockGetRepo = jest.fn();
 
     (Octokit as unknown as jest.Mock).mockImplementation(() => {
       return {
+        paginate: mockPaginate,
         rest: {
           repos: {
             get: mockGetRepo,
-            listCommits: mockListCommits
+            listCommits: jest.fn()
           }
         }
       };
@@ -47,8 +48,8 @@ describe('validator', () => {
 
   it('should return violation when repo is a fork', async () => {
     mockGetRepo.mockResolvedValueOnce({ data: { fork: true } });
-    mockListCommits.mockResolvedValueOnce({ data: [] }); // all commits
-    mockListCommits.mockResolvedValueOnce({ data: [] }); // windowed commits
+    mockPaginate.mockResolvedValueOnce([]); // all commits
+    mockPaginate.mockResolvedValueOnce([]); // windowed commits
 
     const config: ValidatorConfig = { timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' }, maxTeamSize: 4 };
     const result = await validateRepo('https://github.com/owner/forked-repo', config);
@@ -58,15 +59,13 @@ describe('validator', () => {
 
   it('should return violation when commits exist before hackathon start', async () => {
     mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
-    mockListCommits.mockResolvedValueOnce({
-      data: [
-        {
-          commit: { author: { date: '2025-01-01T00:00:00Z' } },
-          author: { login: 'early-dev', type: 'User' }
-        }
-      ]
-    }); // all commits
-    mockListCommits.mockResolvedValueOnce({ data: [] }); // windowed commits
+    mockPaginate.mockResolvedValueOnce([
+      {
+        commit: { author: { date: '2025-01-01T00:00:00Z' } },
+        author: { login: 'early-dev', type: 'User' }
+      }
+    ]); // all commits
+    mockPaginate.mockResolvedValueOnce([]); // windowed commits
 
     const config: ValidatorConfig = { timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' }, maxTeamSize: 4 };
     const result = await validateRepo('https://github.com/owner/repo', config);
@@ -75,15 +74,13 @@ describe('validator', () => {
 
   it('should return violation when commits exist after hackathon deadline', async () => {
     mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
-    mockListCommits.mockResolvedValueOnce({
-      data: [
-        {
-          commit: { author: { date: '2027-01-01T00:00:00Z' } },
-          author: { login: 'late-dev', type: 'User' }
-        }
-      ]
-    }); // all commits
-    mockListCommits.mockResolvedValueOnce({ data: [] }); // windowed commits
+    mockPaginate.mockResolvedValueOnce([
+      {
+        commit: { author: { date: '2027-01-01T00:00:00Z' } },
+        author: { login: 'late-dev', type: 'User' }
+      }
+    ]); // all commits
+    mockPaginate.mockResolvedValueOnce([]); // windowed commits
 
     const config: ValidatorConfig = { timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' }, maxTeamSize: 4 };
     const result = await validateRepo('https://github.com/owner/repo', config);
@@ -94,11 +91,11 @@ describe('validator', () => {
     mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
 
     const commits = [
-      { commit: { author: { date: '2026-03-13T10:00:00Z' } }, author: { login: 'human-dev', type: 'User' } },
-      { commit: { author: { date: '2026-03-13T11:00:00Z' } }, author: { login: 'dependabot[bot]', type: 'Bot' } }
+      { commit: { author: { date: '2026-03-13T10:00:00Z' }, message: '' }, author: { login: 'human-dev', type: 'User' } },
+      { commit: { author: { date: '2026-03-13T11:00:00Z' }, message: '' }, author: { login: 'dependabot[bot]', type: 'Bot' } }
     ];
-    mockListCommits.mockResolvedValueOnce({ data: commits }); // all commits
-    mockListCommits.mockResolvedValueOnce({ data: commits }); // windowed commits
+    mockPaginate.mockResolvedValueOnce(commits); // all commits
+    mockPaginate.mockResolvedValueOnce(commits); // windowed commits
 
     const config: ValidatorConfig = { timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' }, maxTeamSize: 4 };
     const result = await validateRepo('https://github.com/owner/repo', config);
@@ -111,11 +108,11 @@ describe('validator', () => {
     mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
 
     const commits = [
-      { commit: { author: { date: '2026-03-13T10:00:00Z' } }, author: { login: 'dev-one', type: 'User' } },
-      { commit: { author: { date: '2026-03-13T11:00:00Z' } }, author: { login: 'dev-two', type: 'User' } }
+      { commit: { author: { date: '2026-03-13T10:00:00Z' }, message: '' }, author: { login: 'dev-one', type: 'User' } },
+      { commit: { author: { date: '2026-03-13T11:00:00Z' }, message: '' }, author: { login: 'dev-two', type: 'User' } }
     ];
-    mockListCommits.mockResolvedValueOnce({ data: commits }); // all commits
-    mockListCommits.mockResolvedValueOnce({ data: commits }); // windowed commits
+    mockPaginate.mockResolvedValueOnce(commits); // all commits
+    mockPaginate.mockResolvedValueOnce(commits); // windowed commits
 
     const config: ValidatorConfig = { timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' }, maxTeamSize: 1 };
     const result = await validateRepo('https://github.com/owner/repo', config);
@@ -126,10 +123,10 @@ describe('validator', () => {
   it('should not run plagiarism check when not enabled', async () => {
     mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
     const commits = [
-      { commit: { author: { date: '2026-03-13T10:00:00Z' } }, author: { login: 'human-dev', type: 'User' } }
+      { commit: { author: { date: '2026-03-13T10:00:00Z' }, message: '' }, author: { login: 'human-dev', type: 'User' } }
     ];
-    mockListCommits.mockResolvedValueOnce({ data: commits });
-    mockListCommits.mockResolvedValueOnce({ data: commits });
+    mockPaginate.mockResolvedValueOnce(commits);
+    mockPaginate.mockResolvedValueOnce(commits);
 
     const config: ValidatorConfig = { timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' }, maxTeamSize: 4 };
     const result = await validateRepo('https://github.com/owner/repo', config);
@@ -143,10 +140,10 @@ describe('validator', () => {
   it('should return violation when README plagiarism is detected', async () => {
     mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
     const commits = [
-      { commit: { author: { date: '2026-03-13T10:00:00Z' } }, author: { login: 'human-dev', type: 'User' } }
+      { commit: { author: { date: '2026-03-13T10:00:00Z' }, message: '' }, author: { login: 'human-dev', type: 'User' } }
     ];
-    mockListCommits.mockResolvedValueOnce({ data: commits });
-    mockListCommits.mockResolvedValueOnce({ data: commits });
+    mockPaginate.mockResolvedValueOnce(commits);
+    mockPaginate.mockResolvedValueOnce(commits);
 
     mockFetchReadme.mockResolvedValueOnce('Some README content');
     mockExtractSignificantLines.mockReturnValueOnce(['line1', 'line2', 'line3']);
@@ -166,10 +163,10 @@ describe('validator', () => {
   it('should pass when README plagiarism check finds no matches', async () => {
     mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
     const commits = [
-      { commit: { author: { date: '2026-03-13T10:00:00Z' } }, author: { login: 'human-dev', type: 'User' } }
+      { commit: { author: { date: '2026-03-13T10:00:00Z' }, message: '' }, author: { login: 'human-dev', type: 'User' } }
     ];
-    mockListCommits.mockResolvedValueOnce({ data: commits });
-    mockListCommits.mockResolvedValueOnce({ data: commits });
+    mockPaginate.mockResolvedValueOnce(commits);
+    mockPaginate.mockResolvedValueOnce(commits);
 
     mockFetchReadme.mockResolvedValueOnce('Some README content');
     mockExtractSignificantLines.mockReturnValueOnce(['line1', 'line2', 'line3']);
@@ -195,8 +192,8 @@ describe('validator', () => {
       },
       author: { login: 'dev-one', type: 'User' }
     }];
-    mockListCommits.mockResolvedValueOnce({ data: commits }); // all commits
-    mockListCommits.mockResolvedValueOnce({ data: commits }); // windowed commits
+    mockPaginate.mockResolvedValueOnce(commits); // all commits
+    mockPaginate.mockResolvedValueOnce(commits); // windowed commits
 
     const config: ValidatorConfig = {
       timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' },
@@ -220,8 +217,8 @@ describe('validator', () => {
       },
       author: { login: 'dev-one', type: 'User' }
     }];
-    mockListCommits.mockResolvedValueOnce({ data: commits }); // all commits
-    mockListCommits.mockResolvedValueOnce({ data: commits }); // windowed commits
+    mockPaginate.mockResolvedValueOnce(commits); // all commits
+    mockPaginate.mockResolvedValueOnce(commits); // windowed commits
 
     const config: ValidatorConfig = {
       timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' },
@@ -245,8 +242,8 @@ describe('validator', () => {
       },
       author: { login: 'dev-one', type: 'User' }
     }];
-    mockListCommits.mockResolvedValueOnce({ data: commits }); // all commits
-    mockListCommits.mockResolvedValueOnce({ data: commits }); // windowed commits
+    mockPaginate.mockResolvedValueOnce(commits); // all commits
+    mockPaginate.mockResolvedValueOnce(commits); // windowed commits
 
     const config: ValidatorConfig = {
       timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' },

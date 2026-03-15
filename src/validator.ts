@@ -65,13 +65,13 @@ export async function validateRepo(repoUrl: string, config: ValidatorConfig): Pr
     const hackathonEnd = new Date(config.timeWindow.end);
 
     // 3. Fetch all commits to check for out-of-window commits
-    const allCommitsResponse = await octokit.rest.repos.listCommits({
+    const allCommits = await octokit.paginate(octokit.rest.repos.listCommits, {
       owner,
       repo,
       per_page: 100
     });
 
-    const hasEarlyCommit = allCommitsResponse.data.some((commitItem: any) => {
+    const hasEarlyCommit = allCommits.some((commitItem: any) => {
       if (!commitItem.commit.author?.date) return false;
       return new Date(commitItem.commit.author.date) < hackathonStart;
     });
@@ -80,7 +80,7 @@ export async function validateRepo(repoUrl: string, config: ValidatorConfig): Pr
       violations.push('Commits exist before hackathon start');
     }
 
-    const hasLateCommit = allCommitsResponse.data.some((commitItem: any) => {
+    const hasLateCommit = allCommits.some((commitItem: any) => {
       if (!commitItem.commit.author?.date) return false;
       return new Date(commitItem.commit.author.date) > hackathonEnd;
     });
@@ -90,7 +90,7 @@ export async function validateRepo(repoUrl: string, config: ValidatorConfig): Pr
     }
 
     // 4. Fetch windowed commits to determine human contributors
-    const commitsResponse = await octokit.rest.repos.listCommits({
+    const windowedCommits = await octokit.paginate(octokit.rest.repos.listCommits, {
       owner,
       repo,
       since: hackathonStart.toISOString(),
@@ -100,7 +100,7 @@ export async function validateRepo(repoUrl: string, config: ValidatorConfig): Pr
 
     const committersMap = new Map<string, Contributor>();
 
-    for (const commitItem of commitsResponse.data) {
+    for (const commitItem of windowedCommits) {
       if (commitItem.author && commitItem.author.login) {
         committersMap.set(commitItem.author.login, {
           login: commitItem.author.login,
