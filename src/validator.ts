@@ -1,6 +1,7 @@
 import { Octokit } from '@octokit/rest';
 import { ValidatorConfig, ValidationResult } from './types';
 import { filterBots, Contributor } from './bot-filter';
+import { fetchReadme, extractSignificantLines, checkReadmePlagiarism } from './readme-checker';
 
 function parseGithubUrl(url: string): { owner: string; repo: string } | null {
   try {
@@ -97,6 +98,22 @@ export async function validateRepo(repoUrl: string, config: ValidatorConfig): Pr
     // 5. Team size check
     if (humanContributors.length > config.maxTeamSize) {
       violations.push(`Team size exceeded: found ${humanContributors.length}, max is ${config.maxTeamSize}`);
+    }
+
+    // 6. README plagiarism check (opt-in)
+    if (config.readmePlagiarism?.enabled) {
+      const readmeContent = await fetchReadme(octokit, owner, repo);
+      if (readmeContent) {
+        const significantLines = extractSignificantLines(readmeContent);
+        if (significantLines.length > 0) {
+          const { isPlagiarized, matchedLines } = await checkReadmePlagiarism(
+            octokit, owner, repo, significantLines, config.readmePlagiarism.matchThreshold
+          );
+          if (isPlagiarized) {
+            violations.push(`README plagiarism detected: ${matchedLines.length} significant lines found in other repositories`);
+          }
+        }
+      }
     }
 
   } catch (error: any) {

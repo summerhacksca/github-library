@@ -1,8 +1,18 @@
 import { validateRepo } from '../validator';
 import { ValidatorConfig } from '../types';
 import { Octokit } from '@octokit/rest';
+import { fetchReadme, extractSignificantLines, checkReadmePlagiarism } from '../readme-checker';
 
 jest.mock('@octokit/rest');
+jest.mock('../readme-checker', () => ({
+  fetchReadme: jest.fn(),
+  extractSignificantLines: jest.fn(),
+  checkReadmePlagiarism: jest.fn(),
+}));
+
+const mockFetchReadme = fetchReadme as jest.Mock;
+const mockExtractSignificantLines = extractSignificantLines as jest.Mock;
+const mockCheckReadmePlagiarism = checkReadmePlagiarism as jest.Mock;
 
 describe('validator', () => {
   let mockListCommits: jest.Mock;
@@ -111,5 +121,68 @@ describe('validator', () => {
     const result = await validateRepo('https://github.com/owner/repo', config);
     expect(result.isValid).toBe(false);
     expect(result.violations.some(v => v.includes('Team size exceeded'))).toBe(true);
+  });
+
+  it('should not run plagiarism check when not enabled', async () => {
+    mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
+    const commits = [
+      { commit: { author: { date: '2026-03-13T10:00:00Z' } }, author: { login: 'human-dev', type: 'User' } }
+    ];
+    mockListCommits.mockResolvedValueOnce({ data: commits });
+    mockListCommits.mockResolvedValueOnce({ data: commits });
+
+    const config: ValidatorConfig = { timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' }, maxTeamSize: 4 };
+    const result = await validateRepo('https://github.com/owner/repo', config);
+
+    expect(result.isValid).toBe(true);
+    expect(mockFetchReadme).not.toHaveBeenCalled();
+    expect(mockExtractSignificantLines).not.toHaveBeenCalled();
+    expect(mockCheckReadmePlagiarism).not.toHaveBeenCalled();
+  });
+
+  it('should return violation when README plagiarism is detected', async () => {
+    mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
+    const commits = [
+      { commit: { author: { date: '2026-03-13T10:00:00Z' } }, author: { login: 'human-dev', type: 'User' } }
+    ];
+    mockListCommits.mockResolvedValueOnce({ data: commits });
+    mockListCommits.mockResolvedValueOnce({ data: commits });
+
+    mockFetchReadme.mockResolvedValueOnce('Some README content');
+    mockExtractSignificantLines.mockReturnValueOnce(['line1', 'line2', 'line3']);
+    mockCheckReadmePlagiarism.mockResolvedValueOnce({ isPlagiarized: true, matchedLines: ['line1', 'line2'] });
+
+    const config: ValidatorConfig = {
+      timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' },
+      maxTeamSize: 4,
+      readmePlagiarism: { enabled: true, matchThreshold: 2 }
+    };
+    const result = await validateRepo('https://github.com/owner/repo', config);
+
+    expect(result.isValid).toBe(false);
+    expect(result.violations.some(v => v.includes('README plagiarism detected'))).toBe(true);
+  });
+
+  it('should pass when README plagiarism check finds no matches', async () => {
+    mockGetRepo.mockResolvedValueOnce({ data: { fork: false } });
+    const commits = [
+      { commit: { author: { date: '2026-03-13T10:00:00Z' } }, author: { login: 'human-dev', type: 'User' } }
+    ];
+    mockListCommits.mockResolvedValueOnce({ data: commits });
+    mockListCommits.mockResolvedValueOnce({ data: commits });
+
+    mockFetchReadme.mockResolvedValueOnce('Some README content');
+    mockExtractSignificantLines.mockReturnValueOnce(['line1', 'line2', 'line3']);
+    mockCheckReadmePlagiarism.mockResolvedValueOnce({ isPlagiarized: false, matchedLines: [] });
+
+    const config: ValidatorConfig = {
+      timeWindow: { start: '2026-03-12T08:00:00Z', end: '2026-03-15T18:00:00Z' },
+      maxTeamSize: 4,
+      readmePlagiarism: { enabled: true, matchThreshold: 2 }
+    };
+    const result = await validateRepo('https://github.com/owner/repo', config);
+
+    expect(result.isValid).toBe(true);
+    expect(result.violations).toHaveLength(0);
   });
 });
