@@ -55,3 +55,32 @@ export async function fetchReadme(octokit: Octokit, owner: string, repo: string)
     return null;
   }
 }
+
+export async function checkReadmePlagiarism(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  significantLines: string[],
+  matchThreshold: number
+): Promise<{ isPlagiarized: boolean; matchedLines: string[] }> {
+  const matchedLines: string[] = [];
+  const ownFullName = `${owner}/${repo}`;
+
+  for (const line of significantLines) {
+    if (matchedLines.length >= matchThreshold) break;
+
+    try {
+      const response = await octokit.rest.search.code({ q: line });
+      const externalMatch = response.data.items.some(
+        item => item.repository.full_name !== ownFullName
+      );
+      if (externalMatch) {
+        matchedLines.push(line);
+      }
+    } catch {
+      // skip lines that cause search errors (403, 422, etc.)
+    }
+  }
+
+  return { isPlagiarized: matchedLines.length >= matchThreshold, matchedLines };
+}
