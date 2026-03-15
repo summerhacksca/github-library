@@ -27,7 +27,33 @@ const BOILERPLATE_PATTERNS = [
   'git clone',
   'yarn add',
   'pip install',
+  'make sure you have',
+  'you will need',
+  'clone this repository',
+  'run the following',
+  'open your browser',
+  'navigate to',
+  'create a new file',
+  'set up your',
+  'make sure to',
+  "don't forget to",
+  'feel free to',
+  'we decided to use',
+  'this project uses',
+  'we used',
+  'powered by',
+  'fork this repo',
+  'pull request',
+  'open an issue',
+  'contributions are welcome',
 ];
+
+const TECH_WORDS = new Set([
+  'react', 'node', 'express', 'mongodb', 'python', 'flask', 'django',
+  'typescript', 'javascript', 'html', 'css', 'tailwind', 'next', 'vue',
+  'angular', 'postgres', 'mysql', 'redis', 'docker', 'aws', 'firebase',
+  'supabase', 'vercel', 'heroku',
+]);
 
 export function extractSignificantLines(readmeContent: string): string[] {
   return readmeContent
@@ -40,9 +66,22 @@ export function extractSignificantLines(readmeContent: string): string[] {
     )
     .filter(line => {
       if (line.length === 0) return false;
-      if (line.length < 30) return false;
+      if (line.length < 50) return false;
+
+      const words = line.split(/\s+/).filter(Boolean);
+      if (words.length < 8) return false;
+
       const lower = line.toLowerCase();
       if (BOILERPLATE_PATTERNS.some(pattern => lower.includes(pattern))) return false;
+
+      // Filter lines that are mostly URLs
+      const urlMatch = lower.match(/https?:\/\/\S+/);
+      if (urlMatch && urlMatch[0].length > line.length / 2) return false;
+
+      // Filter tech stack list lines
+      const techWordCount = words.filter(w => TECH_WORDS.has(w.toLowerCase())).length;
+      if (techWordCount > words.length / 2) return false;
+
       return true;
     });
 }
@@ -56,6 +95,15 @@ export async function fetchReadme(octokit: Octokit, owner: string, repo: string)
   }
 }
 
+function fisherYatesShuffle<T>(arr: T[]): T[] {
+  const shuffled = [...arr];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
 export async function checkReadmePlagiarism(
   octokit: Octokit,
   owner: string,
@@ -66,7 +114,11 @@ export async function checkReadmePlagiarism(
   const matchedLines: string[] = [];
   const ownFullName = `${owner}/${repo}`;
 
-  for (const line of significantLines) {
+  const linesToSearch = significantLines.length > 10
+    ? fisherYatesShuffle(significantLines).slice(0, 10)
+    : significantLines;
+
+  for (const line of linesToSearch) {
     if (matchedLines.length >= matchThreshold) break;
 
     try {

@@ -78,7 +78,7 @@ for (const [url, result] of results) {
 - `maxTeamSize` (number) — Maximum allowed human contributors. Includes co-authors from `Co-authored-by` commit trailers.
 - `readmePlagiarism` (optional object) — Opt-in README plagiarism detection.
   - `enabled` (boolean) — Set to `true` to enable.
-  - `matchThreshold` (number) — How many significant README lines found in other GitHub repos triggers a violation.
+  - `matchThreshold` (number) — How many significant README lines found in other GitHub repos triggers a violation. Significant lines are filtered aggressively — short lines, boilerplate headings, setup instructions, tech stack lists, and URLs are all excluded. A random sample of up to 10 significant lines is searched.
 
 ## Response Reference
 
@@ -106,7 +106,7 @@ The library automatically filters bot accounts from contributor counts using fou
 
 ## Rate Limits
 
-The library uses `@octokit/plugin-throttling` to automatically retry on rate limit errors with up to 2 retries. Passing a `githubToken` is strongly recommended if you're validating multiple repos or using the README plagiarism feature, since code search has a tight rate limit of 10 requests/minute unauthenticated vs 30 authenticated.
+The library uses `@octokit/plugin-throttling` to automatically retry on rate limit errors with up to 2 retries. Passing a `githubToken` is strongly recommended if you're validating multiple repos or using the README plagiarism feature, since code search has a tight rate limit of 10 requests/minute unauthenticated vs 30 authenticated. The README plagiarism check searches a maximum of 10 randomly sampled lines per repo, regardless of README length. This keeps API cost predictable — at most 10 search requests per repo.
 
 ## Co-authored Commits
 

@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(npm install:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(node -e \"const s=''Significantly longer than fifty characters but seven''; console.log\\(''len:'', s.length, ''words:'', s.split\\(/\\\\s+/\\).length\\)\")"
     ]
   }
 }
